@@ -50,32 +50,55 @@ When STT runs on GPU, LLM performance degrades:
 
 Both models share the same GPU (RTX 5080), causing interference.
 
-## Optimization Options
+## Optimization: Isolated Resources (TESTED ✅)
 
-### Option 1: Accept Current Latency (MVP)
-- 2100ms voice-to-voice
-- Good for testing, not production
+Moving STT to CPU eliminates GPU contention:
 
-### Option 2: Separate GPU Resources
-- Run STT on CPU (small-medium model)
-- Keep LLM on GPU
-- Expected: ~600-800ms V2V
+### Configuration
+- **STT:** CPU (small model, int8)
+- **LLM:** GPU (Qwen3-8B-AWQ)
+- **TTS:** Microsoft Cloud (Edge TTS)
 
-### Option 3: Streaming Architecture
-- Start TTS while LLM is generating
-- Stream first sentence immediately
-- Expected: ~700-1000ms to first audio
+### Results
+| Component | Before (Contention) | After (Isolated) |
+|-----------|---------------------|------------------|
+| STT | 400ms (GPU) | 625ms (CPU small) |
+| LLM TTFT | 1200ms ❌ | **137ms** ✅ |
+| TTS | 400ms | 517ms |
+| **V2V Total** | **2100ms** | **1279ms** |
 
-### Option 4: Cloud STT
-- Use Azure Speech or Google STT
-- Very fast (~100ms)
-- Expected: ~500-600ms V2V
+**Improvement: 39% faster (821ms saved)**
+
+### STT Model Comparison (CPU)
+| Model | Processing Time | Accuracy |
+|-------|----------------|----------|
+| large-v3-turbo | 2240ms | Perfect |
+| medium | 2090ms | Perfect |
+| small | **625ms** | Good |
+
+### Key Insight
+GPU contention was the bottleneck, not individual component speed.
+LLM TTFT improved from 1200ms to 137ms (9x faster) by isolating resources.
+
+## Further Optimization Options
+
+### Option 1: Streaming Architecture
+- Start TTS on first LLM sentence
+- Expected: ~800-900ms to first audio
+
+### Option 2: Cloud STT (Azure/Google)
+- ~100ms latency
+- Expected: ~650ms V2V
+
+### Option 3: Smaller LLM
+- Qwen2.5-3B or Phi-3-mini
+- Expected: ~1000ms V2V with current setup
 
 ## Recommended Path Forward
 
-1. **Short-term (MVP):** Accept 2s latency, focus on functionality
-2. **Medium-term:** Implement sentence streaming (LLM → TTS)
-3. **Long-term:** Consider dedicated STT GPU or cloud STT
+1. **Current (MVP):** 1279ms latency, isolated resources ✅
+2. **Next:** Implement streaming (LLM → TTS overlap)
+3. **Future:** Cloud STT for <500ms target
 
 ## Individual Component Benchmarks
 
