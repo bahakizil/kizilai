@@ -1,0 +1,44 @@
+# SesAI Platform - Development Docker Compose
+# For local development without GPU (uses CPU mode)
+
+version: "3.8"
+
+services:
+  # ==========================================================================
+  # SesAI Voice Agent Service (CPU mode)
+  # ==========================================================================
+  sesai:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    container_name: sesai-agent-dev
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8765:8765"
+    environment:
+      - STT_MODEL=selimc/whisper-large-v3-turbo-turkish
+      - STT_DEVICE=cpu
+      - STT_COMPUTE_TYPE=float32
+      - TTS_VOICE=tr-TR-EmelNeural
+      - VLLM_BASE_URL=http://host.docker.internal:8000/v1
+      - LLM_MODEL=Qwen/Qwen2.5-7B-Instruct-AWQ
+      - AUDIOSOCKET_HOST=0.0.0.0
+      - AUDIOSOCKET_PORT=8765
+      - LOG_LEVEL=DEBUG
+      - LOG_FORMAT=console
+    volumes:
+      - ../src:/app/src:ro
+      - huggingface-cache:/home/sesai/.cache/huggingface
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - sesai-network
+
+networks:
+  sesai-network:
+    driver: bridge
+
+volumes:
+  huggingface-cache:
+    driver: local

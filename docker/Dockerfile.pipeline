@@ -1,0 +1,36 @@
+# Full Pipeline Test Container - STT + TTS + LLM client
+FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
+    ffmpeg \
+    libsndfile1 \
+    git \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python
+
+WORKDIR /app
+
+# Install Chatterbox TTS (will install its own PyTorch, we'll override later)
+RUN pip install --no-cache-dir chatterbox-tts soundfile scipy
+
+# Install faster-whisper for STT
+RUN pip install --no-cache-dir faster-whisper
+
+# Install OpenAI client for LLM
+RUN pip install --no-cache-dir openai
+
+# LAST: Override PyTorch with NIGHTLY for RTX 5080 Blackwell (sm_120 support)
+RUN pip install --no-cache-dir --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 --force-reinstall
+
+# Fix NumPy version if needed
+RUN pip install --no-cache-dir "numpy<2.4,>=1.24"
+
+CMD ["python3", "-c", "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"]

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SesAI Voice AI - FreeSWITCH Dialplan
+
+  This dialplan routes incoming calls to the SesAI AudioSocket server
+  for real-time voice AI processing.
+-->
+
+<include>
+  <extension name="sesai-voice-agent">
+    <condition field="destination_number" expression="^(\d{4})$">
+      <!-- Log call start -->
+      <action application="log" data="INFO SesAI: Incoming call to ${destination_number} from ${caller_id_number}"/>
+
+      <!-- Set audio parameters for telephony -->
+      <action application="set" data="RECORD_STEREO=false"/>
+      <action application="set" data="RECORD_SAMPLE_RATE=8000"/>
+
+      <!-- Answer the call -->
+      <action application="answer"/>
+
+      <!-- Short delay for audio to stabilize -->
+      <action application="sleep" data="500"/>
+
+      <!-- Connect to SesAI AudioSocket server -->
+      <!-- Format: audiosocket://<host>:<port>/<uuid> -->
+      <action application="audiosocket" data="sesai:8765/${uuid}"/>
+
+      <!-- Hangup after AudioSocket disconnects -->
+      <action application="hangup"/>
+    </condition>
+  </extension>
+
+  <!-- Catch-all for unmatched calls -->
+  <extension name="unmatched">
+    <condition field="destination_number" expression="^(.*)$">
+      <action application="log" data="WARNING SesAI: Unmatched call to ${destination_number}"/>
+      <action application="hangup" data="UNALLOCATED_NUMBER"/>
+    </condition>
+  </extension>
+</include>

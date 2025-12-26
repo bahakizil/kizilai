@@ -1,0 +1,1 @@
+{"model": "Qwen/Qwen3-8B-AWQ", "messages": [{"role": "system", "content": "Sen yardımcı bir Türkçe asistansın. Kısa ve öz cevaplar ver."}, {"role": "user", "content": "Merhaba! Kendini kısaca tanıt."}], "max_tokens": 150}
