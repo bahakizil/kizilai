@@ -1,143 +1,136 @@
 #!/usr/bin/env python3
-"""Full pipeline test: STT → LLM → TTS (Turkish)."""
+"""Full Pipeline Test: Edge TTS + STT Container + vLLM"""
 
-import time
-import os
 import asyncio
-import numpy as np
-import soundfile as sf
-import torch
-from faster_whisper import WhisperModel
+import time
+import aiohttp
+import edge_tts
 from openai import AsyncOpenAI
 
-def test_full_pipeline():
-    print("=" * 70)
-    print("Full Pipeline Test: STT → LLM → TTS")
-    print("=" * 70)
+# Configuration
+STT_URL = "http://192.168.1.11:8001/transcribe"
+VLLM_URL = "http://192.168.1.11:8000/v1"
+TTS_VOICE = "tr-TR-EmelNeural"
 
-    # Check GPU
-    print(f"\nCUDA available: {torch.cuda.is_available()}")
-    if torch.cuda.is_available():
-        print(f"GPU: {torch.cuda.get_device_name(0)}")
-        print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+async def test_full_pipeline(user_input: str):
+    """Test the complete voice pipeline."""
+    print("=" * 60)
+    print("FULL PIPELINE TEST")
+    print("=" * 60)
 
-    # =========================================================================
-    # Step 1: Load STT Model
-    # =========================================================================
-    print("\n" + "-" * 70)
-    print("Step 1: Loading STT Model (faster-whisper)")
-    print("-" * 70)
+    total_start = time.time()
 
-    start = time.time()
-    stt_model = WhisperModel("large-v3-turbo", device="cpu", compute_type="int8")
-    print(f"STT model loaded in {time.time() - start:.1f}s")
+    # Step 1: Generate user audio (simulate user speaking)
+    print(f"\n[1] User says: \"{user_input}\"")
+    print("    Generating user audio with Edge TTS...")
+    step1_start = time.time()
 
-    # =========================================================================
-    # Step 2: Load TTS Model
-    # =========================================================================
-    print("\n" + "-" * 70)
-    print("Step 2: Loading TTS Model (Chatterbox)")
-    print("-" * 70)
+    communicate = edge_tts.Communicate(user_input, TTS_VOICE)
+    audio_data = b""
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            audio_data += chunk["data"]
 
-    start = time.time()
-    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-    tts_model = ChatterboxMultilingualTTS.from_pretrained(device="cuda")
-    print(f"TTS model loaded in {time.time() - start:.1f}s")
+    step1_time = (time.time() - step1_start) * 1000
+    print(f"    User audio generated in {step1_time:.0f}ms ({len(audio_data)/1024:.1f}KB)")
 
-    # =========================================================================
-    # Step 3: Initialize LLM Client
-    # =========================================================================
-    print("\n" + "-" * 70)
-    print("Step 3: Initializing LLM Client (Qwen3 via vLLM)")
-    print("-" * 70)
+    # Step 2: STT transcription
+    print("\n[2] STT: Transcribing audio...")
+    step2_start = time.time()
 
-    llm_client = AsyncOpenAI(base_url="http://localhost:8000/v1", api_key="not-needed")
-    print("LLM client initialized")
+    async with aiohttp.ClientSession() as session:
+        data = aiohttp.FormData()
+        data.add_field('file', audio_data, filename='audio.wav', content_type='audio/wav')
+        async with session.post(STT_URL, data=data) as resp:
+            result = await resp.json()
+            transcribed_text = result["text"]
 
-    # =========================================================================
-    # Step 4: Full Pipeline Test
-    # =========================================================================
-    print("\n" + "-" * 70)
-    print("Step 4: Running Full Pipeline")
-    print("-" * 70)
+    step2_time = (time.time() - step2_start) * 1000
+    print(f"    Transcribed: \"{transcribed_text}\"")
+    print(f"    STT completed in {step2_time:.0f}ms")
 
-    # Use existing Turkish audio file as input
-    input_audio = "/input/output_tr_2.wav"  # "Size nasıl yardımcı olabilirim?"
+    # Step 3: LLM response
+    print("\n[3] LLM: Generating response...")
+    step3_start = time.time()
 
-    if not os.path.exists(input_audio):
-        print(f"Error: Input audio not found: {input_audio}")
-        return False
+    client = AsyncOpenAI(base_url=VLLM_URL, api_key="not-needed")
 
-    print(f"\nInput audio: {input_audio}")
+    messages = [
+        {"role": "system", "content": "Sen Türkçe konuşan yardımcı bir asistansın. Kısa ve öz cevaplar ver."},
+        {"role": "user", "content": transcribed_text}
+    ]
 
-    # --- STT ---
-    print("\n[STT] Transcribing...")
-    start = time.time()
-    segments, info = stt_model.transcribe(input_audio, language="tr", beam_size=5)
-    user_text = " ".join(seg.text.strip() for seg in segments)
-    stt_time = time.time() - start
-    print(f"[STT] Transcribed: {user_text}")
-    print(f"[STT] Time: {stt_time:.2f}s")
+    response = await client.chat.completions.create(
+        model="Qwen/Qwen3-8B-AWQ",
+        messages=messages,
+        max_tokens=100,
+        temperature=0.7,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}}
+    )
 
-    # --- LLM ---
-    print("\n[LLM] Generating response...")
+    assistant_response = response.choices[0].message.content
+    step3_time = (time.time() - step3_start) * 1000
+    print(f"    Response: \"{assistant_response}\"")
+    print(f"    LLM completed in {step3_time:.0f}ms")
 
-    async def get_llm_response(text):
-        response = await llm_client.chat.completions.create(
-            model="Qwen/Qwen3-8B-AWQ",
-            messages=[
-                {"role": "system", "content": "Sen yardımcı bir Türkçe asistansın. Kısa ve öz cevaplar ver."},
-                {"role": "user", "content": text}
-            ],
-            max_tokens=100,
-            temperature=0.7
-        )
-        return response.choices[0].message.content
+    # Step 4: TTS synthesis
+    print("\n[4] TTS: Synthesizing response...")
+    step4_start = time.time()
+    first_chunk_time = None
 
-    start = time.time()
-    llm_response = asyncio.run(get_llm_response(user_text))
-    llm_time = time.time() - start
-    print(f"[LLM] Response: {llm_response}")
-    print(f"[LLM] Time: {llm_time:.2f}s")
+    communicate = edge_tts.Communicate(assistant_response, TTS_VOICE)
+    response_audio = b""
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            if first_chunk_time is None:
+                first_chunk_time = (time.time() - step4_start) * 1000
+            response_audio += chunk["data"]
 
-    # --- TTS ---
-    print("\n[TTS] Synthesizing speech...")
-    start = time.time()
-    wav = tts_model.generate(llm_response, language_id="tr")
-    tts_time = time.time() - start
+    step4_time = (time.time() - step4_start) * 1000
+    print(f"    First audio chunk in {first_chunk_time:.0f}ms")
+    print(f"    TTS completed in {step4_time:.0f}ms ({len(response_audio)/1024:.1f}KB)")
 
-    # Save output
-    wav_np = wav.cpu().numpy().squeeze().astype(np.float32)
-    output_path = "/output/pipeline_response.wav"
-    os.makedirs("/output", exist_ok=True)
-    sf.write(output_path, wav_np, 24000, subtype='PCM_16')
-
-    duration = len(wav_np) / 24000
-    print(f"[TTS] Duration: {duration:.2f}s")
-    print(f"[TTS] Time: {tts_time:.2f}s")
-    print(f"[TTS] RTF: {tts_time/duration:.2f}x")
-    print(f"[TTS] Saved to: {output_path}")
-
-    # =========================================================================
     # Summary
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("Pipeline Summary")
-    print("=" * 70)
-    print(f"User said: {user_text}")
-    print(f"AI response: {llm_response}")
-    print(f"\nLatency breakdown:")
-    print(f"  STT: {stt_time*1000:.0f}ms")
-    print(f"  LLM: {llm_time*1000:.0f}ms")
-    print(f"  TTS: {tts_time*1000:.0f}ms")
-    print(f"  TOTAL: {(stt_time + llm_time + tts_time)*1000:.0f}ms")
+    total_time = (time.time() - total_start) * 1000
 
-    if torch.cuda.is_available():
-        mem_used = torch.cuda.max_memory_allocated() / 1024**3
-        print(f"\nPeak GPU memory: {mem_used:.2f} GB")
+    # Calculate voice-to-voice latency (STT + LLM + TTS first chunk)
+    voice_to_voice = step2_time + step3_time + first_chunk_time
 
-    print("=" * 70)
-    return True
+    print("\n" + "=" * 60)
+    print("RESULTS")
+    print("=" * 60)
+    print(f"  Step 1 (User TTS):     {step1_time:>6.0f}ms (simulation only)")
+    print(f"  Step 2 (STT):          {step2_time:>6.0f}ms")
+    print(f"  Step 3 (LLM):          {step3_time:>6.0f}ms")
+    print(f"  Step 4 (Response TTS): {step4_time:>6.0f}ms (first chunk: {first_chunk_time:.0f}ms)")
+    print("-" * 60)
+    print(f"  VOICE-TO-VOICE:        {voice_to_voice:>6.0f}ms (STT + LLM + TTS first)")
+    print(f"  TOTAL PIPELINE:        {total_time:>6.0f}ms")
+    print("=" * 60)
+
+    return voice_to_voice
+
+async def main():
+    # Test with various inputs
+    test_inputs = [
+        "Merhaba, nasılsın?",
+        "Bugün hava nasıl?",
+    ]
+
+    results = []
+    for text in test_inputs:
+        latency = await test_full_pipeline(text)
+        results.append(latency)
+        print()
+
+    print("\n" + "=" * 60)
+    print("FINAL SUMMARY")
+    print("=" * 60)
+    avg = sum(results) / len(results)
+    print(f"  Average Voice-to-Voice: {avg:.0f}ms")
+    print(f"  Target: <500ms")
+    print(f"  Status: {'✅ TARGET MET!' if avg < 500 else '⚠️ NEEDS OPTIMIZATION'}")
+    print("=" * 60)
 
 if __name__ == "__main__":
-    test_full_pipeline()
+    asyncio.run(main())
