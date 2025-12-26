@@ -15,12 +15,17 @@
 | Real-time Ratio | 17x faster than realtime |
 | Accuracy | Perfect Turkish transcription |
 
-### LLM (Qwen3-8B-AWQ via vLLM)
-| Metric | Value |
-|--------|-------|
-| TTFT (isolated) | 156-188ms |
-| TTFT (after STT) | 1100-1200ms ⚠️ |
-| Cause | GPU contention |
+### LLM Comparison
+
+| Model | TTFT (isolated) | TTFT (pipeline) | VRAM |
+|-------|-----------------|-----------------|------|
+| Qwen3-8B-AWQ | 137ms | 1200ms (contention) | ~8GB |
+| **Qwen3-4B-AWQ** | **75ms** | **102ms** ✅ | ~3GB |
+
+**Qwen3-4B-AWQ Optimizations:**
+- Chunked prefill enabled
+- AWQ marlin backend
+- max_num_batched_tokens=2048
 
 ### TTS (Edge TTS - Microsoft Cloud)
 | Metric | Value |
@@ -54,20 +59,19 @@ Both models share the same GPU (RTX 5080), causing interference.
 
 Moving STT to CPU eliminates GPU contention:
 
-### Configuration
+### Configuration v2 (Latest)
 - **STT:** CPU (small model, int8)
-- **LLM:** GPU (Qwen3-8B-AWQ)
+- **LLM:** GPU (Qwen3-4B-AWQ with chunked prefill)
 - **TTS:** Microsoft Cloud (Edge TTS)
 
-### Results
-| Component | Before (Contention) | After (Isolated) |
-|-----------|---------------------|------------------|
-| STT | 400ms (GPU) | 625ms (CPU small) |
-| LLM TTFT | 1200ms ❌ | **137ms** ✅ |
-| TTS | 400ms | 517ms |
-| **V2V Total** | **2100ms** | **1279ms** |
+### Results Comparison
+| Config | STT | LLM TTFT | TTS | V2V Total |
+|--------|-----|----------|-----|-----------|
+| GPU Contention | 400ms | 1200ms | 400ms | **2100ms** |
+| Isolated (8B) | 625ms | 137ms | 517ms | **1279ms** |
+| **Isolated (4B)** | 604ms | **102ms** | 456ms | **1161ms** |
 
-**Improvement: 39% faster (821ms saved)**
+**Total Improvement: 45% faster (939ms saved from original)**
 
 ### STT Model Comparison (CPU)
 | Model | Processing Time | Accuracy |
@@ -96,9 +100,17 @@ LLM TTFT improved from 1200ms to 137ms (9x faster) by isolating resources.
 
 ## Recommended Path Forward
 
-1. **Current (MVP):** 1279ms latency, isolated resources ✅
-2. **Next:** Implement streaming (LLM → TTS overlap)
-3. **Future:** Cloud STT for <500ms target
+1. **Current (MVP):** 1161ms latency, Qwen3-4B-AWQ ✅
+2. **Next:** Cloud STT (AssemblyAI ~90ms) → ~650ms V2V
+3. **Then:** Cartesia Sonic TTS (~50ms) → ~400ms V2V
+4. **Future:** Streaming pipeline + sentence chunking → <300ms V2V
+
+### Latency Breakdown to <500ms Target
+```
+Current:    STT(604) + LLM(102) + TTS(456) = 1161ms
+With Cloud: STT(100) + LLM(100) + TTS(450) =  650ms
+With Sonic: STT(100) + LLM(100) + TTS(50)  =  250ms ✅
+```
 
 ## Individual Component Benchmarks
 
